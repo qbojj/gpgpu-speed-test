@@ -1,0 +1,4 @@
+
+[submodule "kompute"]
+	path = kompute
+	url = https://github.com/KomputeProject/kompute
