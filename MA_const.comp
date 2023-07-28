@@ -9,19 +9,59 @@ layout(push_constant) uniform PushConstants {
     uint size;
 };
 
-layout(constant_id = 0) const uint ma_length = 1;
+layout(constant_id = 0) const uint ma_size = 1;
+layout(constant_id = 1) const uint variant = 1;
+
+const uint wg_size = gl_WorkGroupSize.x;
+shared float block[wg_size * 2];
 
 void main()
 {
-    uint index = gl_GlobalInvocationID.x;
+    const uint wg_index = gl_LocalInvocationID.x;
+    const uint wg_id = gl_WorkGroupID.x;
 
-    if( index >= size ) return;
+    const uint base_index = wg_id * wg_size;
+    const uint index = base_index + wg_index;
 
-    float sum = 0.f;
-    uint start = index - min(ma_length, index);
+    if( variant == 0 )
+    {
+        if( index >= size ) return;
 
-    for( uint i = start; i <= index; i++ )
-        sum += a[i];
-    
-    b[index] = sum / float(index - start + 1);
+        const uint start = index >= ma_size - 1 ? index - ma_size + 1 : 0;
+
+        float sum = 0.f;
+        for( uint i = start; i < index; ++i )
+            sum += a[i];
+
+        b[index] = sum / ma_size;
+    } else {
+        block[wg_index + 0      ] = index >= wg_size ? a[index - wg_size] : 0.f;
+        block[wg_index + wg_size] = index < size ? a[index] : 0.f;
+        barrier();
+
+        uint to_apply = ma_size;
+        uint data_index = index;
+
+        float sum = 0.f;
+        for(; to_apply >= wg_size; to_apply -= wg_size, data_index -= wg_size )
+        {
+            for( uint j = 0; j < wg_size; j++ )
+                sum += block[wg_index + wg_size - j];
+            
+            barrier();
+            
+            block[wg_index + 0      ] = data_index >= wg_size ? a[data_index - wg_size] : 0.f;
+            block[wg_index + wg_size] = block[wg_index];
+            barrier();
+        }
+
+        // to_apply < wg_size
+        for( uint i = 0; i < to_apply; i++ )
+            sum += block[wg_index + wg_size - i];
+
+        float res = sum / ma_size;
+
+        if( index < size )
+            b[index] = res;
+    }
 }

@@ -27,7 +27,7 @@ void cpu_MA_const(const std::vector<float> &in, size_t MA, std::vector<float> &o
     for( size_t i = 0; i < std::min(MA, len); ++i )
     {
         acc += in[i];
-        out[i] = acc / (float)(i+1);
+        out[i] = acc / MA;
     }
 
     for( size_t i = MA; i < len; ++i )

@@ -11,19 +11,12 @@
 
 static std::vector<float> get_data(size_t size)
 {
-    std::vector<float> dat(size, 1.f);
+    std::vector<float> dat(size);
 
-/*
     float q = 0;
-    const float mod = 309.109293751;
-
     for( float &f : dat )
-    {
-        f = q;
-        q += 1;
-        if( q > mod ) q -= mod;
-    }
-*/
+        f = (q += 1);
+
     return dat;
 }
 
@@ -44,16 +37,16 @@ static std::vector<uint32_t> get_spirv(const std::string &path)
     throw std::runtime_error("bad read " + path);
 }
 
+kp::Manager mgr;
+
 std::pair<double, std::vector<float>> time_gpu(size_t size, size_t tests)
 {
-    kp::Manager mgr(1);
-
     auto data = get_data(size);
 
     const kp::Constants cst(size);
 
     const auto input_type = kp::Tensor::TensorTypes::eHost;
-    const auto output_type = kp::Tensor::TensorTypes::eHost;
+    const auto output_type = kp::Tensor::TensorTypes::eDevice;
 
     auto Open = mgr.tensor(cst, input_type);
     auto High = mgr.tensor(cst, input_type);
@@ -63,15 +56,15 @@ std::pair<double, std::vector<float>> time_gpu(size_t size, size_t tests)
 
     std::vector<std::shared_ptr<kp::Tensor>> tmps;
 
+    constexpr bool debug = false;
+
     for( int i = 0; i < 7; ++i )
-        tmps.push_back( mgr.tensor(cst, kp::Tensor::TensorTypes::eStorage) );
+        tmps.push_back( mgr.tensor(cst, debug ? output_type : kp::Tensor::TensorTypes::eStorage) );
 
     auto gpu_sum = get_spirv("sum.comp.spv");
     auto gpu_div_const = get_spirv("div_const.comp.spv");
     auto gpu_MA_const = get_spirv("MA_const.comp.spv");
     auto gpu_sub = get_spirv("sub.comp.spv");
-
-    std::vector<float> res(size);
 
     const kp::Workgroup workgroup{ static_cast<uint32_t>( (size + 63) / 64 ), 1, 1 };
     std::vector<uint32_t> size_push{{ static_cast<uint32_t>(size) }};
@@ -82,8 +75,8 @@ std::pair<double, std::vector<float>> time_gpu(size_t size, size_t tests)
 
     auto alg_div_4 = mgr.algorithm({tmps[1], tmps[2]}, gpu_div_const, workgroup, {4.f}, size_push);
 
-    auto alg_ma_20 = mgr.algorithm({tmps[2], tmps[3]}, gpu_MA_const, workgroup, {20}, size_push );
-    auto alg_ma_40 = mgr.algorithm({tmps[2], tmps[4]}, gpu_MA_const, workgroup, {40}, size_push );
+    auto alg_ma_20 = mgr.algorithm<uint32_t,uint32_t>({tmps[2], tmps[3]}, gpu_MA_const, workgroup, {20}, size_push );
+    auto alg_ma_40 = mgr.algorithm<uint32_t,uint32_t>({tmps[2], tmps[4]}, gpu_MA_const, workgroup, {40}, size_push );
 
     auto alg_sub = mgr.algorithm({tmps[3], tmps[4], tmps[5]}, gpu_sub, workgroup, {}, size_push );
 
@@ -140,14 +133,30 @@ std::pair<double, std::vector<float>> time_gpu(size_t size, size_t tests)
         seq->record<kp::OpTensorCopy>({tmps[5], Result})
             ->record<kp::OpTensorSyncLocal>({Result});
         
+        if( debug ) seq->record<kp::OpTensorSyncLocal>(tmps);
+        
         seq->eval();
-
-        memcpy( res.data(), Result->data(), size );
     }
 
     auto end = std::chrono::high_resolution_clock::now();
 
-    return {std::chrono::duration<double>(end - start).count(), res};
+    if( debug )
+    {
+        for( size_t i = 0; i < tmps.size(); i++ )
+        {
+            std::cout << "tmps[" << i << "]: {";
+            for( float f : std::dynamic_pointer_cast<kp::TensorT<float>>(tmps[i])->vector() )
+                std::cout << f << ", ";
+            std::cout << "}\n";
+        }
+
+        std::cout << "Result: {";
+        for( float f : Result->vector() )
+            std::cout << f << ", ";
+        std::cout << "}\n";
+    }
+
+    return {std::chrono::duration<double>(end - start).count(), Result->vector()};
 }
 
 std::pair<double, std::vector<float>> time_cpu(size_t size, size_t tests)
@@ -203,14 +212,20 @@ std::pair<double, std::vector<float>> time_cpu(size_t size, size_t tests)
     return {std::chrono::duration<double>(end - start).count(), res};
 }
 
+bool cmp_res(float A, float B) 
+{
+   float diff = A - B;
+   return (diff < 1e-3f) && (-diff < 1e-3f);
+}
+
 int main()
 {
     const size_t tests = 1;
     std::cout << "test reps: " << tests << "\n";
-
-    for( size_t s : {10, 100, 1000, 10000, 100000} )
+    
+    for( size_t s : {10, 100, 1000, 10000} )
     {
-        s *= 1024;
+        s *= 1000;
         std::cout << s << " test: \n";
 
         auto [t_gpu, r_gpu] = time_gpu(s, tests);
@@ -219,9 +234,13 @@ int main()
         auto [t_cpu, r_cpu] = time_cpu(s, tests);
         std::cout << "cpu: " << t_cpu << " (" << (t_cpu / tests)*1000 << "ms per test)\n";
 
-        if( r_gpu != r_cpu )
-            std::cout << "different implementations result in different results!\n";
-
+        for( size_t i = 0; i < s; i++ )
+            if( !cmp_res( r_gpu[i], r_cpu[i] ) )
+            {
+                std::cout << "different implementations result in different results!\n";
+                break;
+            }
+        
         std::cout << "\n";
     }
 }

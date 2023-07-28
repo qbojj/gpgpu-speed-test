@@ -4,7 +4,7 @@ project(gpgpu-speed-test)
 set(CMAKE_CXX_STANDARD 17)
 
 set(KOMPUTE_OPT_LOG_LEVEL "Warn")
-set(KOMPUTE_OPT_DISABLE_VK_DEBUG_LAYERS On)
+set(KOMPUTE_OPT_DISABLE_VK_DEBUG_LAYERS Off)
 
 add_subdirectory(kompute)
 
