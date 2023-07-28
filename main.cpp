@@ -1,3 +1,7 @@
+#include "cpu_ops.hpp"
+
+#include "kompute/Kompute.hpp"
+
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -5,11 +9,9 @@
 #include <chrono>
 #include <stdexcept>
 
-#include <kompute/Kompute.hpp>
-
 static std::vector<float> get_data(size_t size)
 {
-    std::vector<float> dat(size);
+    std::vector<float> dat(size, 1.f);
 
 /*
     float q = 0;
@@ -133,7 +135,7 @@ std::pair<double, std::vector<float>> time_gpu(size_t size, size_t tests)
                 vk::AccessFlagBits::eShaderWrite, vk::AccessFlagBits::eTransferWrite,
                 vk::PipelineStageFlagBits::eComputeShader, vk::PipelineStageFlagBits::eTransfer );
         
-        // result = t5
+        // Result = t5
         // GPU --> CPU
         seq->record<kp::OpTensorCopy>({tmps[5], Result})
             ->record<kp::OpTensorSyncLocal>({Result});
@@ -146,25 +148,6 @@ std::pair<double, std::vector<float>> time_gpu(size_t size, size_t tests)
     auto end = std::chrono::high_resolution_clock::now();
 
     return {std::chrono::duration<double>(end - start).count(), res};
-}
-
-void cpu_MA(const std::vector<float> &in, size_t MA, std::vector<float> &out)
-{
-    float acc = 0.f;
-    size_t len = in.size();
-
-    for( size_t i = 0; i < std::min(MA, len); ++i )
-    {
-        acc += in[i];
-        out[i] = acc / (float)(i+1);
-    }
-
-    for( size_t i = MA; i < len; ++i )
-    {
-        acc += in[i];
-        acc -= in[i-MA];
-        out[i] = acc / MA;
-    }
 }
 
 std::pair<double, std::vector<float>> time_cpu(size_t size, size_t tests)
@@ -194,30 +177,23 @@ std::pair<double, std::vector<float>> time_cpu(size_t size, size_t tests)
         Close = data;
 
         // t1 = ((Open + High) + Low) + Close
-        for( size_t i = 0; i < size; i++ )
-            tmps[6][i] = Open[i] + High[i];
-        
-        for( size_t i = 0; i < size; i++ )
-            tmps[0][i] = tmps[6][i] + Low[i];
-        
-        for( size_t i = 0; i < size; i++ )
-            tmps[1][i] = tmps[0][i] + Close[i];
-        
+        cpu_add(Open, High, tmps[6]);
+        cpu_add(tmps[6], Low, tmps[0]);
+        cpu_add(tmps[0], Close, tmps[1]);
+
         // t2 = t1 / 4
-        for( size_t i = 0; i < size; ++i )
-            tmps[2][i] = tmps[1][i] / 4.f;
-        
+        cpu_div_const(tmps[1], 4.f, tmps[2]);
+
         // t3 = MA(t2, 20)
         // t4 = MA(t2, 40)
-        cpu_MA(tmps[2], 20, tmps[3]);
-        cpu_MA(tmps[2], 40, tmps[4]);
+        cpu_MA_const(tmps[2], 20, tmps[3]);
+        cpu_MA_const(tmps[2], 40, tmps[4]);
 
         // t5 = t3 - t4
-        for( size_t i = 0; i < size; ++i )
-            tmps[5][i] = tmps[3][i] - tmps[4][i];
-        
-        // result = t5
-        Result = tmps[5];
+        cpu_sub(tmps[3], tmps[4], tmps[5]);
+
+        // Result = t5
+        cpu_cpy(tmps[5], Result);
 
         res = Result;
     }
@@ -232,7 +208,7 @@ int main()
     const size_t tests = 1;
     std::cout << "test reps: " << tests << "\n";
 
-    for( size_t s : {10, 100, 1000, 10000, 100000, 1000000} )
+    for( size_t s : {10, 100, 1000, 10000, 100000} )
     {
         s *= 1024;
         std::cout << s << " test: \n";
