@@ -1,0 +1,23 @@
+#version 460
+
+layout(set = 0, binding = 0) buffer readonly restrict in_a { float a[]; };
+layout(set = 0, binding = 1) buffer readonly restrict in_b { float b[]; };
+layout(set = 0, binding = 2) buffer readonly restrict in_c { float c[]; };
+layout(set = 0, binding = 3) buffer readonly restrict in_d { float d[]; };
+layout(set = 0, binding = 4) buffer writeonly restrict out_e { float e[]; };
+
+layout (local_size_x = 64) in;
+
+layout(push_constant) uniform PushConstants {
+    uint size;
+};
+
+layout(constant_id = 0) const float div_value = 1.f;
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+
+    if( index < size )
+        e[index] = (a[index] + b[index] + c[index] + d[index]) / div_value;
+}
